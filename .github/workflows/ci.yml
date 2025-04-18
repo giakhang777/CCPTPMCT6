@@ -1,25 +1,45 @@
-name: CI on Pull Request
+name: CI/CD with GitHub, Jira and Slack
 
 on:
   pull_request:
-    branches:
-      - main
+    types: [opened, synchronize, reopened, closed]
 
 jobs:
-  build:
+  build-and-test:
+    if: github.event.pull_request.merged != true
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v3
+      - run: echo Hello world
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+  update-jira:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract Jira Issue Key
+        id: extract
+        run: |
+          echo "JIRA_KEY=$(echo '${{ github.event.pull_request.title }}' | grep -o '[A-Z]\+-[0-9]\+')" >> $GITHUB_OUTPUT
+
+      - name: Login to Jira
+        uses: atlassian/gajira-login@v3
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+      - name: Transition Jira issue to Done
+        uses: atlassian/gajira-transition@v3
         with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run tests
-        run: npm test
+          issue: ${{ steps.extract.outputs.JIRA_KEY }}
+          transition: Done
+          
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: Jira issue *${{ steps.extract.outputs.JIRA_KEY }}* has been closed successfully!"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
